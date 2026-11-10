@@ -6,6 +6,9 @@ from urllib.parse import quote_plus
 from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from data import *
+from locais import LOCAIS, ITEM_LOCAL, WIKI
+ROTEIRO = {}   # local -> [(dia, hora, nome, parágrafos)]
+DIAS_LOCAL = {}
 
 roma, out = sys.argv[1], sys.argv[2]   # roma = raiz do repositório de Roma
 ANO = {"12": 2026, "1": 2027}
@@ -123,19 +126,29 @@ for i, d in enumerate(DAYS):
             nota = " ".join(it["p"])
             core = (f'<span class="hora">{e(hora)}</span><span class="dot"></span>'
                     f'<span class="body"><span class="ttl2">{e(titulo)}</span><span class="nota">{e(nota)}</span></span>')
-            if it.get("m"):
+            lk = ITEM_LOCAL.get((d["id"], it.get("n")))
+            if lk:
+                ROTEIRO.setdefault(lk, []).append((d, hora, titulo, it["p"]))
+                DIAS_LOCAL.setdefault(lk, []); d in DIAS_LOCAL[lk] or DIAS_LOCAL[lk].append(d)
+                b += f'<li class="it">{go(lk, core + "<span class=chev>›</span>", "row")}</li>'
+            elif it.get("m"):
                 b += f'<li class="it">{ext(maps(it["m"]), core + "<span class=legin>Mapa ›</span>", "row")}</li>'
             else:
                 b += f'<li class="it"><div class="row">{core}</div></li>'
             continue
         refeicao = any(w in it["n"].lower() for w in ("almoço", "jantar", "café"))
-        tem_pagina = bool(it["p"]) and len(" ".join(it["p"])) > 120
+        lk = ITEM_LOCAL.get((d["id"], it["n"]))
+        tem_pagina = lk is not None or (bool(it["p"]) and len(" ".join(it["p"])) > 120)
         nota = first_sentence(it["p"][0]) if it["p"] else ""
         dot = "refeicao" if refeicao else ("ref" if tem_pagina else "")
         core = (f'<span class="hora{" g" if tem_pagina else ""}">{e(hora)}</span><span class="dot {dot}"></span>'
                 f'<span class="body"><span class="{"ttl" if tem_pagina else "ttl2"}">{e(it["n"])}</span>'
                 + (f'<span class="nota">{e(nota if tem_pagina else " ".join(it["p"]))}</span>' if it["p"] else "") + "</span>")
-        if tem_pagina:
+        if lk:
+            ROTEIRO.setdefault(lk, []).append((d, hora, it["n"], it["p"]))
+            DIAS_LOCAL.setdefault(lk, []); d in DIAS_LOCAL[lk] or DIAS_LOCAL[lk].append(d)
+            b += f'<li class="it">{go(lk, core + "<span class=chev>›</span>", "row")}</li>'
+        elif tem_pagina:
             pid = f'{d["id"]}-{slug(it["n"])}'
             b += f'<li class="it">{go(pid, core + "<span class=chev>›</span>", "row")}</li>'
             # página do lugar
@@ -164,6 +177,39 @@ for i, d in enumerate(DAYS):
     b += ('<nav class="pn">' + (go(prev["id"], "‹ " + e(prev["date"]), "chip") if prev else "<span></span>")
           + go("inicio", "Sumário", "chip") + (go(nxt["id"], e(nxt["date"]) + " ›", "chip") if nxt else go("checklist", "Antes de ir ›", "chip")) + "</nav></div>")
     page(d["id"], b, f'{d["date"]} · {d["title"]}', "day")
+
+
+# ------------------------------------------------------------- páginas das atrações (modelo de Roma)
+def paras(t, cls=""):
+    return "".join(f'<p class="{cls}">{e(p)}</p>' for p in str(t).split("\n") if p.strip())
+for key, p in LOCAIS.items():
+    dias = DIAS_LOCAL.get(key, [])
+    kick = "Atração" + ("".join(" · " + dd["date"] for dd in dias))
+    wl, wu = WIKI[key]
+    wk = ext(wu, e(wl) + " ›", "wiki")
+    b = f'<div class="wrap"><div class="kickrow"><div class="kick">{e(kick)}</div>{wk}</div><h2 class="h">{e(p["nome"])}</h2>'
+    cidade = "Istanbul" if dias and dias[0]["n"] <= 4 else "Turkey"
+    busca = p["mapa"].split(",")[0] + " " + cidade
+    b += ext(gimg(busca), "<span>Ver fotos ›</span>", "nophoto")
+    b += '<div class="btn2">' + ext(maps(p["mapa"]), "Como chegar", "btn") + ext(gimg(busca), "Mais fotos", "btn line") + "</div>"
+    for gi, g in enumerate(p.get("topicos", [])):
+        b += go(f"{key}-extras-{gi}", e(g["botao"]) + " ›", "btn gold wide")
+    b += f'<div class="band">História</div><div class="serif">{paras(p["sobre"])}</div>'
+    b += f'<div class="band">Não perca</div><div class="serif ital">{paras(p["destaques"])}</div>'
+    if p.get("alerta"): b += f'<div class="alert"><div class="kick wine">Atenção</div>{paras(p["alerta"])}</div>'
+    for (dd, hora, nome, ps) in ROTEIRO.get(key, []):
+        b += f'<div class="band">No roteiro · {e(dd["date"])}{" · " + e(hora) if hora else ""}</div><div class="small">{"".join(f"<p>{e(x)}</p>" for x in ps)}</div>'
+    for lab, k in (("Endereço", "endereco"), ("Horário", "horario"), ("Ingresso", "ingresso"), ("Dica", "dica")):
+        if p.get(k): b += f'<div class="band">{lab}</div><div class="small">{paras(p[k])}</div>'
+    if p.get("link_oficial"): b += ext(p["link_oficial"][1], e(p["link_oficial"][0]) + " ›", "btn line wide")
+    b += '<div class="backdays">' + "".join(go(dd["id"], f"‹ Dia {e(dd['date'])}", "chip") for dd in dias) + "</div></div>"
+    page(key, b, p["nome"])
+    for gi, g in enumerate(p.get("topicos", [])):
+        b = f'<div class="wrap"><div class="kick">{e(kick)} · {e(g["botao"].lower())}</div><h2 class="h">{e(g["titulo"])}</h2>'
+        for tit, txt in g["secoes"]:
+            b += f'<div class="band">{e(tit)}</div>' + paras(txt, "serif")
+        b += go(key, "‹ Voltar a " + e(p["nome"]), "chip") + "</div>"
+        page(f"{key}-extras-{gi}", b, g["botao"])
 
 # ------------------------------------------------------------- ícones (mesmo desenho do de Roma, em verde)
 GREEN, GOLD, LGOLD = "#1E646B", "#B8893B", "#E8C987"
